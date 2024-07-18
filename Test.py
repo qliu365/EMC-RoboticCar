@@ -1,60 +1,22 @@
-import cv2
-import numpy as np
-import requests
-import time
-import queue
-import threading
-import cvlib as cv
-import matplotlib.pyplot as plt
-from cvlib.object_detection import draw_bbox
+import socket
 
-class VideoCapture:
+# Replace with your ESP32's IP address and port
+esp32_ip = "10.94.6.115"
+esp32_port = 8080
 
-  def __init__(self, name):
-    self.cap = cv2.VideoCapture(name)
-    self.q = Queue.Queue()
-    t = threading.Thread(target=self._reader)
-    t.daemon = True
-    t.start()
-    
-  def _reader(self):
-    while True:
-      ret, frame = self.cap.read()
-      if not ret:
-        break
-      if not self.q.empty():
-        try:
-          self.q.get_nowait()
-        except Queue.Empty:
-          pass
-      self.q.put(frame)
+# Create a socket object
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-  def read(self):
-    return self.q.get()    
+# Connect to the ESP32 WiFi server
+client_socket.connect((esp32_ip, esp32_port))
 
+# Send a command to the ESP32
+command = "LEFT 0 0 0 0"  # send command with speed value 50
+client_socket.send(command.encode())
 
-URL = "http://10.94.6.115/"
-cap = cv2.VideoCapture(URL + ":80/stream")
+# Receive response from ESP32 (if any)
+response = client_socket.recv(1024)
+print("Response from ESP32:", response.decode())
 
-if __name__ == '__main__':
-    requests.get(URL + "/control?var=framesize&val={}".format(8))
-
-    while True:
-        
-        if cap.isOpened():
-            ret, frame = cap.read()
-            cv2.imshow("Output", frame)
-
-            #imgnp=np.array(bytearray(cap.read()),dtype=np.uint8)
-            #im = cv2.imdecode(imgnp,-1)
-            bbox, label, conf = cv.detect_common_objects(frame)
-            im = draw_bbox(frame, bbox, label, conf)
-            cv2.imshow('Output',im)
-
-            key = cv2.waitKey(3)
-            
-            if key == 27:
-                break
-
-    cv2.destroyAllWindows()
-    cap.release()
+# Close the socket
+client_socket.close()
