@@ -1,32 +1,18 @@
 import cv2
 import numpy as np
 import socket
-import threading
 import time
-
-# Define the paths to the model files
-weights_file_abs_path = r"C:/Users/DELL/Desktop/RealTimeDataProcessing/yolov3.weights"
-config_file_abs_path = r"C:/Users/DELL/Desktop/RealTimeDataProcessing/yolov3.cfg"
-names_file_abs_path = r"C:/Users/DELL/Desktop/RealTimeDataProcessing/coco.names"
+from ultralytics import YOLO
 
 # Load YOLO
-net = cv2.dnn.readNet(weights_file_abs_path, config_file_abs_path)
-# Uncomment the following lines if you have a compatible GPU
-# net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-# net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-
-layer_names = net.getLayerNames()
-output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
-
-# Load class names
-with open(names_file_abs_path, 'r') as f:
-    classes = [line.strip() for line in f.readlines()]
+model = YOLO("yolov8n.pt")  # Load YOLOv8 weights
 
 # URL of the video stream
-URL = "http://192.168.1.88/stream"
+URL = "http://192.168.1.88/stream"  # Replace with your ESP32 camera stream URL
 
 # Open the video stream
 cap = cv2.VideoCapture(URL)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
 
 # Check if the video stream was opened successfully
 if not cap.isOpened():
@@ -48,127 +34,56 @@ except socket.error as e:
     print(f"Socket error: {e}")
     exit()
 
-# Shared frame buffer
-frame_buffer = None
-frame_lock = threading.Lock()
+# Main loop for capturing and processing frames
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Unable to read frame from video stream")
+        break
 
-def send_command(command):
-    try:
-        print(f"Sending command: {command}")
-        client_socket.send(command.encode())
-        # Receive response from ESP32 (if any)
-        response = client_socket.recv(1024)
-        print("Response from ESP32:", response.decode())
-    except socket.timeout:
-        print("Warning: Socket operation timed out")
-    except socket.error as e:
-        print(f"Socket error: {e}")
+    # Resize frame for faster processing
+    frame_resized = cv2.resize(frame, (640, 640))
 
-def capture_frames():
-    global frame_buffer
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Unable to read frame from video stream")
-            break
-        with frame_lock:
-            frame_buffer = frame.copy()
-        time.sleep(0.01)  # Small delay to reduce CPU usage
+    # Perform detection
+    results = model(frame_resized)
 
-def process_frames():
-    global frame_buffer
+    # Process results
     person_detected = False
-    while True:
-        with frame_lock:
-            if frame_buffer is None:
-                continue
-            frame = frame_buffer.copy()
-        
-        # Downscale the frame for faster processing
-        frame = cv2.resize(frame, (416, 416))
-
-        # Get the height, width, and channels of the frame
-        height, width, channels = frame.shape
-
-        # Detecting objects
-        blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
-        net.setInput(blob)
-        outs = net.forward(output_layers)
-
-        # Showing information on the screen
-        class_ids = []
-        confidences = []
-        boxes = []
-        for out in outs:
-            for detection in out:
-                scores = detection[5:]
-                class_id = np.argmax(scores)
-                confidence = scores[class_id]
-                if confidence > 0.5:
-                    # Object detected
-                    center_x = int(detection[0] * width)
-                    center_y = int(detection[1] * height)
-                    w = int(detection[2] * width)
-                    h = int(detection[3] * height)
-
-                    # Rectangle coordinates
-                    x = int(center_x - w / 2)
-                    y = int(center_y - h / 2)
-
-                    boxes.append([x, y, w, h])
-                    confidences.append(float(confidence))
-                    class_ids.append(class_id)
-
-        indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
-
-        person_detected = False
-        for i in range(len(boxes)):
-            if i in indexes:
-                x, y, w, h = boxes[i]
-                label = str(classes[class_ids[i]])
-                confidence = confidences[i]
-                color = (0, 255, 0)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                
-                # Check if the first detected object is a person
-                if label == "person":
-                    person_detected = True
-                    # Determine the direction to move based on the person's position
-                    if center_x < width // 3:
-                        command = "LEFT 1000 1000 -1000 -1000"
-                    elif center_x > 2 * width // 3:
-                        command = "RIGHT -1000 -1000 1000 1000"
-                    else:
-                        command = "FORWARD -1000 -1000 -1000 -1000"
-                    
-                    threading.Thread(target=send_command, args=(command,)).start()
-                    break  # Only process the first detected person
-
-        if not person_detected:
-            # Stop the car and turn
-            stop_command = "STOP"
-            turn_command = "TURN"
-            threading.Thread(target=send_command, args=(stop_command,)).start()
-            time.sleep(1)  # Wait for a second before turning
-            threading.Thread(target=send_command, args=(turn_command,)).start()
-
-        # Display the output image
-        cv2.imshow('Object Detection', frame)
-
-        # Break the loop if 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+    for result in results:
+        boxes = result.boxes
+        for box in boxes:
+            cls = int(box.cls[0])
+            if model.names[cls] == 'person':
+                person_detected = True
+                x1, y1, x2, y2 = box.xyxy[0].int().tolist()  # Convert to int
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, 'Person', (x1, y1 - 10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                break
+        if person_detected:
             break
 
-# Start the threads
-capture_thread = threading.Thread(target=capture_frames)
-process_thread = threading.Thread(target=process_frames)
+    # Send commands based on detection
+    if person_detected:
+        command = "FORWARD 100 100 100 100"  # Adjust velocity as needed
+        client_socket.send((command + '\n').encode())
+    else:
+        # Stop the car and turn
+        stop_command = "STOP 0 0 0 0"
+        client_socket.send((stop_command + '\n').encode())
+        time.sleep(5)  # Wait for 5 seconds before turning
+        turn_command = "TURN 100 100 -100 -100"
+        client_socket.send((turn_command + '\n').encode())
+        time.sleep(0.5)  # Turn for 0.5 seconds
+        client_socket.send((stop_command + '\n').encode())
+        time.sleep(5)  # Wait for another 5 seconds before next action
 
-capture_thread.start()
-process_thread.start()
+    # Display the output image
+    cv2.imshow('Object Detection', frame)
 
-capture_thread.join()
-process_thread.join()
+    # Break the loop if 'q' is pressed
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
 # Release the video capture object and close all OpenCV windows
 cap.release()
