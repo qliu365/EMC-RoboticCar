@@ -79,28 +79,49 @@ def send_commands(running, person_detected, last_person_detected_time, person_po
         running.value = 0
         return
 
+    def send_command(command):
+        print(f"Sending command: {command}")
+        client_socket.send((command + '\n').encode())
+        try:
+            ack = client_socket.recv(1024).decode().strip()
+            if ack == "ACK":
+                print("Acknowledgment received")
+            else:
+                print("No acknowledgment received")
+        except socket.timeout:
+            print("Acknowledgment timeout")
+
     while running.value:
         current_time = time.time()
         if person_detected.value:
             if person_position.value < 320:  # Assuming 640x640 frame, center is at 320
-                turn_command = "TURN_LEFT -500 -500 500 500"  # Turn left
-                print(f"Sending command: {turn_command}")
-                client_socket.send((turn_command + '\n').encode())
+                turn_command = "TURN_LEFT -1000 -1000 1000 1000"  # Turn left
+                send_command(turn_command)
                 time.sleep(0.1)  # Turn for 0.1 seconds
             elif person_position.value > 320:
-                turn_command = "TURN_RIGHT 500 500 -500 -500"  # Turn right
-                print(f"Sending command: {turn_command}")
-                client_socket.send((turn_command + '\n').encode())
-                time.sleep(0.1)  # Turn for 0.1 seconds
-            command = "FORWARD -500 -500 -500 -500"  # Move forward
-            print(f"Sending command: {command}")
-            client_socket.send((command + '\n').encode())
-        else:
-            stop_command = "STOP 0 0 0 0"  # Stop the car
-            print(f"Sending command: {stop_command}")
-            client_socket.send((stop_command + '\n').encode())
-            time.sleep(1)  # Stop for 0.1 seconds
+                turn_command = "TURN_RIGHT 1000 1000 -1000 -1000"  # Turn right
+                send_command(turn_command)
 
+            command = "FORWARD -1000 -1000 -1000 -1000"  # Move forward
+            send_command(command)
+        else:
+            if current_time - last_person_detected_time.value > 20:
+                # Turn for 0.1 seconds with speed 500
+                turn_command = "TURN 500 500 -500 -500"
+                send_command(turn_command)
+                time.sleep(0.1)
+                # Stop for 1 second
+                stop_command = "STOP 0 0 0 0"
+                send_command(stop_command)
+                time.sleep(1)
+            else:
+                stop_command = "STOP 0 0 0 0"  # Stop the car
+                send_command(stop_command)
+                time.sleep(1)  # Stop for 1 second
+
+    # Ensure the car stops when the process is ending
+    stop_command = "STOP 0 0 0 0"
+    send_command(stop_command)
     client_socket.close()
 
 if __name__ == "__main__":
