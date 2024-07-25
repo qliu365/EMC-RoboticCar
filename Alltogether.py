@@ -101,9 +101,11 @@ def send_commands(running, person_detected, last_person_detected_time, person_po
             elif person_position.value > 320:
                 turn_command = "TURN_RIGHT 1000 1000 -1000 -1000"  # Turn right
                 send_command(turn_command)
+                time.sleep(0.1) 
 
             command = "FORWARD -1000 -1000 -1000 -1000"  # Move forward
             send_command(command)
+            time.sleep(0.1) 
         else:
             if current_time - last_person_detected_time.value > 20:
                 # Turn for 0.1 seconds with speed 500
